@@ -1,5 +1,6 @@
 import open3d as o3d
 import numpy as np
+from typing import Tuple
 
 
 class PointCloudManager:
@@ -36,7 +37,7 @@ class PointCloudManager:
         """
         self.pcd.points = o3d.utility.Vector3dVector(self.raw_data)
 
-    def draw(self) -> None:
+    def draw(self, point_show_normal: bool) -> None:
         """
         渲染并交互式展示当前类内部持有的点云几何对象。
         通过向上转型为 Geometry 列表，彻底解决 IDE 的 Expected type 'list[Geometry]' 警告。
@@ -45,7 +46,7 @@ class PointCloudManager:
         geometry_list: list[o3d.geometry.Geometry] = [self.pcd]
 
         # 2. 调用底层渲染引擎
-        o3d.visualization.draw_geometries(geometry_list)
+        o3d.visualization.draw_geometries(geometry_list, point_show_normal=point_show_normal)
 
     def read_data(self, path: str):
         self.pcd = o3d.io.read_point_cloud(path)
@@ -107,4 +108,128 @@ class PointCloudManager:
         self.pcd = self.pcd.select_by_index(ind)
         return self
 
-    # def calculate_normals(self, radius: float = 0.05) :
+    def calculate_normals(self, radius: float = 0.05, max_nn: int = 100):
+        """
+
+        :param max_nn:
+        :param radius:
+        :return:
+        """
+
+        self.pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=radius,
+                max_nn=max_nn,
+            )
+        )
+
+    def find_knn_neighbors(self, source: int, k: int) -> Tuple[
+        int, o3d.utility.IntVector, o3d.utility.DoubleVector]:
+        """
+        通过KNN（K近邻）算法寻找最近的K个邻居
+
+        :param source: 目标点的坐标索引
+        :param k: 想要寻找的邻居数量 (必须是正整数)
+        :return: (找到的邻居数, 邻居在点云中的索引列表, 距离的平方列表)
+        """
+        # 健壮性检查：确保传入的是整数
+        k = int(k)
+
+        kdtree = o3d.geometry.KDTreeFlann(self.pcd)  # 建立k维二叉树索引
+
+        # 执行搜索
+        count, idx, dis = kdtree.search_knn_vector_3d(self.pcd.points[source], k)
+
+        return count, idx, dis
+
+    @classmethod
+    def demo_point_to_point(cls) -> None:
+        """
+        Demo：使用 Open3D 自带测试数据集演示【点对点】ICP 配准。
+        无需外部传参，一键运行查看配准前后的可视化对比。
+        """
+        print("\n" + "=" * 20 + " 启动点对点 ICP Demo " + "=" * 20)
+        # 1. 载入内置的错位测试数据
+        demo_data = o3d.data.DemoICPPointClouds()
+        source_pcd = o3d.io.read_point_cloud(demo_data.paths[0])
+        target_pcd = o3d.io.read_point_cloud(demo_data.paths[1])
+
+        # 2. 染色（黄色为待配准源，蓝色为目标基准）
+        source_pcd.paint_uniform_color([1, 0.706, 0])
+        target_pcd.paint_uniform_color([0, 0.651, 0.929])
+
+        # 3. 备份一份未对齐的源点云，用于前后期对比
+        import copy
+        source_old = copy.deepcopy(source_pcd)
+
+        # 4. 运行点对点 ICP 配准
+        threshold = 0.02
+        result = o3d.pipelines.registration.registration_icp(
+            source_pcd,
+            target_pcd,
+            threshold,
+            np.eye(4),
+            o3d.pipelines.registration.TransformationEstimationPointToPoint()
+        )
+
+        print(f"配准重合度 (Fitness): {result.fitness:.4f}")
+        print(f"均方根误差 (RMSE): {result.inlier_rmse:.4f}")
+
+        # 5. 原地移动源点云
+        source_pcd.transform(result.transformation)
+
+        # 6. 渲染验证
+        print("-> 正在展示：配准前的【错位】状态（请按 Q 键关闭窗口以继续）...")
+        o3d.visualization.draw_geometries([source_old, target_pcd], window_name="Before Registration")
+
+        print("-> 正在展示：点对点 ICP 配准后的【融合】状态...")
+        o3d.visualization.draw_geometries([source_pcd, target_pcd], window_name="After Point-to-Point ICP")
+
+    @classmethod
+    def demo_point_to_plane(cls) -> None:
+        """
+        Demo：使用 Open3D 自带测试数据集演示【点对面】ICP 配准。
+        由于点对面硬性要求目标点云具备法线，函数内部会自动前置计算法线。
+        ICP 第一步是帮 source 的每个点在 target 里找最近的邻居。如果两个点距离大于这个 threshold，ICP 就认为“它们俩根本不是同一个地方，强行配准会带偏大部队”，于是直接丢弃这对匹配
+        """
+        print("\n" + "=" * 20 + " 启动点对面 ICP Demo " + "=" * 20)
+        # 1. 载入内置的错位测试数据
+        demo_data = o3d.data.DemoICPPointClouds()
+        source_pcd = o3d.io.read_point_cloud(demo_data.paths[0])
+        target_pcd = o3d.io.read_point_cloud(demo_data.paths[1])
+
+        # 2. 染色
+        source_pcd.paint_uniform_color([1, 0.706, 0])
+        target_pcd.paint_uniform_color([0, 0.651, 0.929])
+
+        import copy
+        source_old = copy.deepcopy(source_pcd)
+
+        # 3. 【核心前置步骤】：为 Target 估计法线（点对面算法的强依赖）
+        # 这里模拟类内部的 calculate_normals 算子
+        target_pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30)
+        )
+
+        # 4. 运行点对面 ICP 配准
+        threshold = 0.02
+        result = o3d.pipelines.registration.registration_icp(
+            source_pcd,
+            target_pcd,
+            threshold,
+            np.eye(4),
+            o3d.pipelines.registration.TransformationEstimationPointToPlane()
+        )
+
+        print(f"配准重合度 (Fitness): {result.fitness:.4f}")
+        print(f"均方根误差 (RMSE): {result.inlier_rmse:.4f}")
+
+        # 5. 原地移动源点云
+        source_pcd.transform(result.transformation)
+
+        # 6. 渲染验证
+        print("-> 正在展示：配准前的【错位】状态（请按 Q 键关闭窗口以继续）...")
+        o3d.visualization.draw_geometries([source_old, target_pcd], window_name="Before Registration")
+
+        print("-> 正在展示：点对面 ICP 配准后的【融合】状态...")
+        o3d.visualization.draw_geometries([source_pcd, target_pcd], window_name="After Point-to-Plane ICP")
