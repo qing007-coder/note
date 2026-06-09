@@ -1,6 +1,7 @@
 from .common import PointCloudManager
 import open3d as o3d
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def test_open3d():
@@ -9,7 +10,7 @@ def test_open3d():
     #
     # manager.read_data("./resource/pcd/1.pcd")
     # manager.draw(point_show_normal=False)
-    # print(manager.pcd)
+    # # print(manager.pcd)
     #
     # print(manager.get_shape())
     #
@@ -29,7 +30,24 @@ def test_open3d():
     # PointCloudManager.demo_point_to_point()
     # PointCloudManager.demo_point_to_plane()
 
-    run_point_cloud_pipeline()
+    # run_point_cloud_pipeline()
+
+    np.random.seed(0)
+    obj1 = np.random.randn(100, 3) * 0.1 + np.array([0, 0, 0])
+    obj2 = np.random.randn(80, 3) * 0.08 + np.array([1, 1, 0.5])
+    obj3 = np.random.randn(120, 3) * 0.12 + np.array([-1, 0.5, -0.2])
+    # 模拟地面
+    floor = np.random.uniform(-2, 2, (500, 3))
+    floor[:, 2] = -0.5  # Z 轴固定在 -0.5 模拟平面
+
+    mock_raw_data = np.vstack([obj1, obj2, obj3, floor])
+
+    # 执行流水线
+    boxes, foreground = object_detection_pipeline(mock_raw_data)
+
+    # 可视化结果确认
+    if boxes:
+        o3d.visualization.draw_geometries([foreground] + boxes, window_name="Pipeline Output")
 
 
 def run_point_cloud_pipeline() -> None:
@@ -129,3 +147,90 @@ def run_point_cloud_pipeline() -> None:
     o3d.visualization.draw_geometries([source_mgr.pcd, target_mgr.pcd], window_name="2. Final Aligned Pipeline Result")
 
     print("\n" + "█" * 20 + " 流水线演示结束 Pipeline Done " + "█" * 20)
+
+
+def object_detection_pipeline(raw_data: np.ndarray) -> tuple[list, o3d.geometry.PointCloud]:
+    """
+    3D 点云目标提取与检测完整流水线
+
+    :param raw_data: 形状为 (N, 3) 的原始点云 NumPy 数组
+    :return: (包含所有物体 OBB 的列表, 清洗聚类后的前景点云)
+    """
+    print("\n" + "=" * 20 + " 启动点云处理流水线 " + "=" * 20)
+
+    # ----------------------------------------------------
+    # Step 1: 数据数据注入与初始化
+    # ----------------------------------------------------
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(raw_data)
+    print(f"[配置] 原始点云初始化完成，点数: {len(pcd.points)}")
+
+    # ----------------------------------------------------
+    # Step 2: 体素降采样 (控制数据规模)
+    # ----------------------------------------------------
+    voxel_size = 0.02  # 2cm 体素
+    pcd = pcd.voxel_down_sample(voxel_size)
+    print(f"[降采样] 当前点数: {len(pcd.points)}")
+
+    # ----------------------------------------------------
+    # Step 3: 统计学去噪 (剔除空气散射飞点)
+    # ----------------------------------------------------
+    _, inlier_indices = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+    pcd = pcd.select_by_index(inlier_indices)
+    print(f"[去噪] 统计学清洗完成，剩余点数: {len(pcd.points)}")
+
+    # ----------------------------------------------------
+    # Step 4: RANSAC 平面分割 (剥离地面背景)
+    # ----------------------------------------------------
+    # 距离平面 3cm 内的点均判定为地面
+    plane_model, road_indices = pcd.segment_plane(distance_threshold=0.03, ransac_n=3, num_iterations=1000)
+
+    # 提取前景（非地面部分）
+    foreground_pcd = pcd.select_by_index(road_indices, invert=True)
+    print(f"[RANSAC] 地面剥离成功。前景点数: {len(foreground_pcd.points)}")
+
+    # ----------------------------------------------------
+    # Step 5: DBSCAN 密度聚类 (物体分堆)
+    # ----------------------------------------------------
+    # 半径 10cm，最少点数 15 个
+    labels_vector = foreground_pcd.cluster_dbscan(eps=0.10, min_points=15)
+    labels = np.array(labels_vector)
+
+    max_label = labels.max()
+    n_clusters = max_label + 1 if max_label >= 0 else 0
+    print(f"[DBSCAN] 聚类完成。共切分出 {n_clusters} 个独立物体。")
+
+    if n_clusters == 0:
+        return [], foreground_pcd
+
+    # ----------------------------------------------------
+    # Step 6: 循环遍历各个语义标签，计算 OBB 几何特征
+    # ----------------------------------------------------
+    detected_boxes = []
+    cmap = plt.get_cmap("tab20")  # 用于生成不同的框颜色
+
+    for cluster_idx in range(n_clusters):
+        # 1. 精确获取当前物体 ID 的点云索引
+        target_indices = np.where(labels == cluster_idx)[0]
+        cluster_pcd = foreground_pcd.select_by_index(target_indices)
+
+        # 2. 计算物体的 定向包围盒 (OBB)
+        obb = cluster_pcd.get_oriented_bounding_box()
+
+        # 3. 提取空间位置与物理尺度
+        center = obb.get_center()
+        extent = obb.extent  # 局部坐标系下的长、宽、高
+        volume = extent[0] * extent[1] * extent[2]  # 物理体积
+
+        # 4. 打印格式化指标 (无修饰中立输出)
+        print(f"  - 物体 #{cluster_idx}:")
+        print(f"    中心坐标 (X, Y, Z) : [{center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}]")
+        print(f"    真实外形 (长, 宽, High): [{extent[0]:.3f}, {extent[1]:.3f}, {extent[2]:.3f}]")
+        print(f"    外接体积 (Volume)   : {volume:.4f} m³")
+
+        # 5. 渲染着色与容器收集
+        obb.color = cmap(cluster_idx)[:3]
+        detected_boxes.append(obb)
+
+    print(f"[输出] 流水线执行完毕，成功捕获 {len(detected_boxes)} 个 3D 目标边界。")
+    return detected_boxes, foreground_pcd
