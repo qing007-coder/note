@@ -2,3 +2,5 @@ numpy~=2.4.4
 opencv-python
 open3d
 matplotlib
+torch
+scikit-learn
