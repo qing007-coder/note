@@ -1,4 +1,5 @@
 from .tensor import Tensor, nn_demo
+from .nn import PytorchInit, train
 import numpy as np
 
 
@@ -60,4 +61,9 @@ def test_pytorch():
 
     # tensor.detach_demo()
 
-    nn_demo()
+    # nn_demo()
+
+    # nn_init = PytorchInit()
+    # nn_init.test()
+
+    train()
