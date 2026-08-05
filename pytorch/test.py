@@ -1,6 +1,7 @@
 from .tensor import Tensor, nn_demo
 from .nn import PytorchInit, train
 import numpy as np
+from .loss import LossFunction
 
 
 def test_pytorch():
@@ -66,4 +67,8 @@ def test_pytorch():
     # nn_init = PytorchInit()
     # nn_init.test()
 
-    train()
+    # train()
+
+    loss_function = LossFunction()
+    # loss_function.cross_entropy_loss_demo()
+    loss_function.BCE_loss_demo()
