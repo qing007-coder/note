@@ -147,26 +147,50 @@ epsilon_hat                      [B,W,H,7]
 
 ## 三、面试题
 
-1. Octo 的输入、输出分别是什么？
+1. **Octo 的输入、输出分别是什么？**
 
-2. 任务 token、观测 token、readout token 的 `kind` 和 `time` 如何定义？
+   输入是多相机历史观测和任务文本，输出是当前控制时刻的动作块 `[B,H,7]`。
 
-3. 为什么观测 token 不能读取 readout token？
+2. **任务 token、观测 token、readout token 的 `kind` 和 `time` 如何定义？**
 
-4. 分组掩码中，任务、观测、readout 分别允许读取哪些 token？
+   任务 token 为 `kind=0,time=-1`；观测 token 为 `kind=1,time=帧号`；readout token 为 `kind=2,time=帧号`。
 
-5. 为什么要为 readout token 加时间 embedding？
+3. **为什么观测 token 不能读取 readout token？**
 
-6. readout token 在 Octo 中承担什么作用？
+   防止动作条件通过 readout 反向污染观测表示，让观测编码保持独立、稳定并符合信息流设计。
 
-7. 为什么训练时每个历史时刻都要计算动作 loss，而推理只取最后一个有效时刻？
+4. **分组掩码中，任务、观测、readout 分别允许读取哪些 token？**
 
-8. Octo 的动作头为什么使用 ConditionedResidualMLP，而不是 U-Net 或 DiT？
+   任务只读任务；观测读任务和当前 / 过去观测；readout 读任务、非未来观测和当前 / 过去 readout；`valid` 同时屏蔽无效 query 与 key。
 
-9. Octo 的条件是如何融合进 DDPM 动作头的？
+5. **为什么要为 readout token 加时间 embedding？**
 
-10. Octo 的 DDPM 训练和推理流程分别是什么？
+   让不同历史时刻的 readout 保留时间身份，Transformer 才能区分“哪一帧提取出的动作条件”。
 
-11. 为什么 `encode()` 只运行一次，而 `sample()` 可以重复多次？
+6. **readout token 在 Octo 中承担什么作用？**
 
-12. Octo 是生成式 VLM 吗？它和 RT-2 的动作 token 预测有什么区别？
+   它是每个历史时刻的可学习查询槽位，用来从任务和历史观测中提取动作生成所需的条件表示。
+
+7. **为什么训练时每个历史时刻都要计算动作 loss，而推理只取最后一个有效时刻？**
+
+   训练对所有时刻监督可以扩大有效样本量并约束时序表示；推理只需要当前最新条件来输出当前动作块。
+
+8. **Octo 的动作头为什么使用 ConditionedResidualMLP，而不是 U-Net 或 DiT？**
+
+   动作块较短、条件维度明确，残差 MLP 足以完成噪声预测，结构和计算更轻；U-Net / DiT 不是 DDPM 的必需组件。
+
+9. **Octo 的条件是如何融合进 DDPM 动作头的？**
+
+   将 noisy action 展平后，与条件向量 `D` 和扩散时间的正弦嵌入直接拼接，送入 ConditionedResidualMLP，输出 `epsilon_hat [B,H,7]`。
+
+10. **Octo 的 DDPM 训练和推理流程分别是什么？**
+
+    训练随机采样 `t` 和噪声，构造 `x_t` 并回归噪声；推理从纯噪声开始，按 `t=steps-1...0` 逐步反推 `x0`、计算后验均值，`t>0` 加后验噪声，`t=0` 不加噪。
+
+11. **为什么 `encode()` 只运行一次，而 `sample()` 可以重复多次？**
+
+    视觉、文本和 Transformer 条件在一次规划内固定；DDPM 只需要在不同噪声状态上重复调用小型动作头，所以可以复用编码结果，减少计算。
+
+12. **Octo 是生成式 VLM 吗？它和 RT-2 的动作 token 预测有什么区别？**
+
+    不是。Octo 是条件策略，VLM / Transformer 负责编码条件，DDPM 动作头生成连续动作块；RT-2 则把离散动作 token 放入 VLM 词表，用共享 `lm_head` 自回归预测。

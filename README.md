@@ -4,6 +4,18 @@
 
 ## 学习内容
 
+### 具身智能
+
+以网络架构、训练 / 推理流程和张量形状变化为主，每个技术单独一篇：
+
+- 动作生成基础：[VAE](embodied_intelligence/VAE.md) → [ACT](embodied_intelligence/ACT.md)，从多峰动作分布讲到 CVAE、动作块与时间集成。
+- 动作扩散：[DDPM](embodied_intelligence/DDPM.md) → [DDIM](embodied_intelligence/DDIM.md) → [EDM](embodied_intelligence/EDM.md)，讲前向 / 反向、条件注入、η 与跳步，以及连续噪声尺度、预条件器和 ODE 积分。
+- 动作流匹配：[Flow Matching](embodied_intelligence/Flow_Matching.md)，讲插值路径、速度监督、条件 ODE 采样，以及与扩散、CFM 和 Rectified Flow 的区别。
+- 视觉语言动作策略：[RT-1](embodied_intelligence/RT-1.md)，讲 FiLM 视觉编码、TokenLearner、动作离散化，并区分原版与 teacher forcing / KV-Cache 自回归变体。
+- 视觉语言动作策略：[RT-2](embodied_intelligence/RT-2.md)，讲本地 VLM 底座、动作词表 token、共享 `lm_head`、联合交叉熵与自回归解码。
+- 条件动作策略：[Octo](embodied_intelligence/Octo.md)，讲任务 / 观测 / readout token、分组掩码与 DDPM 动作块。
+- 视觉导航演进：[GNM](embodied_intelligence/GNM.md) → [ViNT](embodied_intelligence/ViNT.md) → [NoMaD](embodied_intelligence/NoMaD.md)，从 CNN 航点回归讲到视觉 Transformer、目标掩码与条件扩散。
+
 ### NumPy
 
 - 用 `ndarray` 理解矩阵形状、`reshape`、广播与矩阵乘法
@@ -32,6 +44,19 @@
 ```
 python-note/
 ├── main.py           # 入口，切换 numpy / opencv / open3d 测试
+├── embodied_intelligence/ # 具身智能；网络流程与形状变化
+│   ├── VAE.md
+│   ├── ACT.md
+│   ├── DDPM.md
+│   ├── DDIM.md
+│   ├── EDM.md
+│   ├── Flow_Matching.md
+│   ├── RT-1.md
+│   ├── RT-2.md
+│   ├── Octo.md
+│   ├── GNM.md
+│   ├── ViNT.md
+│   └── NoMaD.md
 ├── numpy_/
 │   ├── common.py     # Numpy 封装
 │   └── test.py
